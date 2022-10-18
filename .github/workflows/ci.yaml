@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  workflow_dispatch:
+  push:
+  pull_request:
+
+jobs:
+  commitlint:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0 
+      - uses: actions/setup-node@v2
+      - run: sudo npm install --global @commitlint/{config-conventional,cli}@17
+      - if: github.event_name == 'pull_request'
+        name: commitlint (pr)
+        run: commitlint -V --from HEAD~${{ github.event.pull_request.commits }} 
+      - if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags')
+        name: commitlint (push)
+        # use .before instead of HEAD~1 so that pushes with multiple commits are completely covered as well
+        # --from is not inclusive, so HEAD~1 will only analyze HEAD
+        # BUT:
+        # check if commit exists first (e.g. it doesn't if it was force pushed) 
+        # or fall back to HEAD~1
+        run: |
+          git cat-file -t ${{ github.event.before }} > /dev/null
+          if [[ $? -eq "0" ]]; then 
+            commitlint -V --from ${{ github.event.before }}
+          else
+            commitlint -V --from HEAD~1
+          fi
+  
+  release:
+    if: github.ref == 'refs/heads/main'
+    needs: commitlint
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write       # for creating the gh release
+      issues: write         # for commenting on related issues
+      pull-requests: write  # for commenting on related pull-requests
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0 # semantic release needs all the history
+      - uses: actions/setup-node@v2
+      - run: sudo npm install --global conventional-changelog-conventionalcommits@5 semantic-release@19
+      - name: Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: semantic-release
+          
